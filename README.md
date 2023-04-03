@@ -10,19 +10,19 @@ $ chat -m 'Write a Python function to greet the person reading this text.'
 ```
 
 ### Output 
-```
+````
 Making a request to OPENAI with arguments:
 Namespace(system='You are a skilled Python programmer who writes tersely.', messages=['Write a Python function to greet the person reading this text.'])
 Sure, here you go!
-```
+
 ```python
 def greet():
     print("Hello there!")
 ```
-```
+
 This code defines a function called `greet()` that, when called, will print the greeting "Hello there!" to the console.
 (83 tokens used.)
-```
+````
 
 ## Output overview
 First, there is a recap of the request sent to the API with selected arguments. Next, chat completion API's response is displayed. Output also includes token count (e.g., 83 tokens used) at the end.
