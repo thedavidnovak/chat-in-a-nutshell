@@ -1,0 +1,30 @@
+name: Update README on new file
+
+on:
+  push:
+    paths:
+      - '**'
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check if README needs updating
+        id: check-readme
+        run: |
+          if [ -z "$(git status --porcelain README.md)" ]; then
+            echo "::set-output name=update-readme::false"
+          else
+            echo "::set-output name=update-readme::true"
+          fi
+
+      - name: Update README
+        if: steps.check-readme.outputs.update-readme == 'true'
+        run: |
+          files=$(git ls-files --others)
+          printf "\n\n" >> README.md
+          printf "<details>\n<summary>New files</summary>\n\n" >> README.md
+          printf "```\n%s\n```\n\n" "$files" >> README.md
+          printf "</details>" >> README.md
+          git add README.md && git commit -m "Auto-update README with new files" || true
