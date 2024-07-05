@@ -6,7 +6,7 @@ This script provides a simple way to chat with OpenAI. It allows you to communic
 ### Input
 
 ```
-$ chat -m 'Write a Python function to greet the person reading this text.'
+$ ch -m 'Write a Python function to greet the person reading this text.'
 ```
 
 ### Output 
@@ -36,15 +36,15 @@ First, there is a recap of the request sent to the API with selected arguments. 
 
 The message is specified using the `--message, -m` argument. 
 ```
-$ chat -m 'Write a Python function `hello_world`.'
+$ ch -m 'Write a Python function `hello_world`.'
 ```
 ### -s
 
 The default `system` message is: 'You are a skilled Python programmer who writes tersely.' You can change it by specifying the `--system, -s` argument inside the current command:
 ```
-$ chat -s 'You are a remarkable Italian teacher.' -m 'Translate "Hello there!"'
+$ ch -s 'You are a remarkable Italian teacher.' -m 'Translate "Hello there!"'
 ```
-In the version `v1.1.0` the recent system message becomes the default one until further change (or configuration file deletion).
+From the version `v1.1.0` the recent system message becomes the default one until further change (or configuration file deletion).
 
 ### -c
 
@@ -58,27 +58,46 @@ You may specify the model that will be used for the API requests (until further 
 
 The temperature may be set using the `--temperature, -t` argument. The default value for this script is 0 (lowest).
 
+### --save-audio
+
+Specify the path to save the audio response using the `--save-audio` argument.
+
+### --available-models
+
+List available OpenAI models using the `--available-models` argument.
+
+### --available-models-gpt
+
+List available ChatGPT models using the `--available-models-gpt` argument.
+
 ## Requirements
 
 To use this script, you will need to have the following:
-- Python 3.6 or higher
-- An OpenAI API key (stored in an environment variable)
-- The `openai` Python module installed
+- Python 3.7.1 or higher
+- An OpenAI API key (stored in an environment variable `OPENAI_API_KEY`)
+
 
 ## Usage
 
 To use the script:
 1. Add your API key to the `OPENAI_API_KEY` environment variable.
-2. Check that the shebang `#!/usr/bin/env python3` matches a Python interpreter with the `openai` module installed.
-3. Make the script executable (`chmod +x`) and create a symbolic link to the script: `sudo ln -s /path/to/chat_openai.py /usr/bin/chat`
+2. Install the package using: `pip install chat-in-a-nutshell`
 
 
 ## Limitations
 
-This script was developed for chatting with OpeanAI's ChatGPT from the comfort of the terminal. The API used in the script incurs charges (depending on its usage). For more information about pricing, refer to the OpenAI documentation.
+This script was developed for chatting with OpenAI's ChatGPT from the comfort of the terminal. The API used in the script incurs charges (depending on its usage). For more information about pricing, refer to the OpenAI documentation.
 Please note that there is no warranty for script functionality. Also, keep in mind that it is suitable for brief and straightforward messages.
 
 ## Release Notes
+
+### Version 1.2.0 (2024-07-05)
+- Migrated to OpenAI v1
+- Published as PyPi package (https://pypi.org/project/chat-in-a-nutshell/)
+- Updated executable name from `chat` to `ch` to avoid conflicts with other programs.
+- Configuration file containing system message, temperature, model and conversation if in conversation mode is now saved in the home directory (`~/.chatconfig.json`).
+- Added the option to save the response as audio file to a specified path.
+- Added the option to list available OpenAI and ChatGPT models.
 
 ### Version 1.1.0 (2023-06-22)
 
