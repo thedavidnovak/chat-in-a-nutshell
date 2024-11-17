@@ -52,6 +52,10 @@ class Chatbot:
         ]
         msgs = system_msg + user_assistant_msgs
 
+        if 'o1' in model:
+            msgs = user_assistant_msgs
+            temperature = 1
+
         try:
             response = self.client.chat.completions.create(model=model, messages=msgs, temperature=temperature)
             response_dict = dict(response)
