@@ -91,6 +91,14 @@ Please note that there is no warranty for script functionality. Also, keep in mi
 
 ## Release Notes
 
+### Version 1.3.0 (2024-11-17)
+- **o1 model support**:
+  - Removed system message from requests to o1 models because they are currently not supported.
+  - Set temperature to 1 for o1 models; other values are not currently supported.
+
+- **Added CI/CD Pipeline**:
+  - Added GitHub Actions pipeline for deploying to PyPI.
+
 ### Version 1.2.0 (2024-07-05)
 - Migrated to OpenAI v1
 - Published as PyPi package (https://pypi.org/project/chat-in-a-nutshell/)

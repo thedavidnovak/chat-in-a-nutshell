@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='chat_in_a_nutshell',
-    version='1.2.0',
+    version='1.3.0',
     author='David Novák',
     description="A terminal-based script for interacting with OpenAI's API.",
     long_description=open('README.md').read(),
