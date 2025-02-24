@@ -4,20 +4,15 @@ Chatbot script to interact with OpenAI's API from the terminal.
 """
 
 import argparse
-import logging
 import os
+import re
 import sys
 
 from openai import OpenAI
 
 from chat import Chatbot, Speaker, ChatCompletionError, CreateAudioError, SaveAudioError
+from chat.logging_setup import setup_logging
 
-
-def setup_logging():
-    logging.basicConfig(encoding="utf-8", format="%(message)s", level=logging.INFO)
-    logger = logging.getLogger(__name__)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    return logger
 
 logger = setup_logging()
 
@@ -46,9 +41,35 @@ def parse_arguments():
     parser.add_argument("--model", type=str, help="Specify the model to use.")
     parser.add_argument("--available-models-gpt", action='store_true', help="List available ChatGPT models.")
     parser.add_argument("--available-models", action='store_true', help="List available OpenAI models.")
+    parser.add_argument("--available-tools", action='store_true', help="List available tools.")
     parser.add_argument("-t", "--temperature", type=str_to_float, help="Set the temperature for the model.")
+    parser.add_argument("-e", "--reasoning-effort", choices=["low", "medium", "high"], help="Set the reasoning effort, only applicable to reasoning models.")
+    parser.add_argument("--use-tools", action='store_true', dest='use_tools', help="Enable tool usage.")
+    parser.add_argument("--no-tools", action='store_false', dest='use_tools', help="Disable tool usage.")
+    parser.set_defaults(use_tools=None)
     return parser.parse_args()
 
+
+def print_settings(chatbot, header):
+    settings = (
+        f"{header}\n"
+        f"\tmodel: {chatbot.model:<10}\n"
+        f"\ttemperature: {chatbot.temperature}\n"
+        f"\tsystem message: {chatbot.system_message}\n"
+        f"\treasoning effort: {chatbot.reasoning_effort}\n"
+        f"\tuse tools: {chatbot.use_tools}"
+    )
+    print(settings)
+
+def log_chat_details(chatbot):
+    is_reasoning_model = re.search(r'^o\d', chatbot.model)
+    details = f"Chat\nModel: {chatbot.model}"
+    if is_reasoning_model:
+        details += f", Reasoning effort: {chatbot.reasoning_effort}"
+    details += f", Temperature: {chatbot.temperature}\n"
+    details += f"System: {chatbot.system_message}\n"
+    details += f"Message: {chatbot.user_messages[-1]}\n"
+    logger.info(details)
 
 def main():
     args = parse_arguments()
@@ -65,7 +86,18 @@ def main():
 
     chatbot.system_message = args.system or chatbot.system_message
     chatbot.model = args.model or chatbot.model
+    chatbot.reasoning_effort = args.reasoning_effort or chatbot.reasoning_effort
     chatbot.temperature = args.temperature if args.temperature is not None else chatbot.temperature
+    chatbot.use_tools = args.use_tools if args.use_tools is not None else chatbot.use_tools
+
+    if chatbot.use_tools:
+        chatbot.load_tools_metadata()
+    else:
+        chatbot.tools = []
+
+    if args.available_tools:
+        print(chatbot.get_tool_list())
+        sys.exit(0)
 
     if args.messages:
         if args.conversation:
@@ -79,52 +111,30 @@ def main():
         sys.exit(1)
     elif args.conversation:
         chatbot.user_messages = []
-        print(
-            "New conversation started.\n"
-            "Continue chatting with: ch -c -m \"Your message.\"\n"
-            "Current settings:\n"
-            f"\tmodel: {chatbot.model:<10}\n"
-            f"\ttemperature: {chatbot.temperature}\n"
-            f"\tsystem message: {chatbot.system_message}"
-        )
+        print("New conversation started.\n"
+              "Continue chatting with: ch -c -m \"Your message.\"")
+        print_settings(chatbot, "Current settings:")
         sys.exit(0)
-    elif any([args.model, args.system, args.temperature]):
-        print(
-            "Settings updated.\n"
-            "Current settings:\n"
-            f"\tmodel: {chatbot.model:<10}\n"
-            f"\ttemperature: {chatbot.temperature}\n"
-            f"\tsystem message: {chatbot.system_message}"
-        )
-        sys.exit(0)
-    elif args.temperature is not None:
-        print(
-            "Settings updated.\n"
-            "Current settings:\n"
-            f"\tmodel: {chatbot.model:<10}\n"
-            f"\ttemperature: {chatbot.temperature}\n"
-            f"\tsystem message: {chatbot.system_message}"
-        )
+    elif any([args.model, args.system, args.temperature is not None, args.use_tools is not None, args.reasoning_effort]):
+        print_settings(chatbot, "Settings updated.")
         sys.exit(0)
     else:
         print('Expected some arguments. Usage: ch -m "Your message"')
         sys.exit(1)
 
-    logger.info(
-        f"Chat\nModel: {chatbot.model}, Temperature: {chatbot.temperature}\n"
-        f"System: {chatbot.system_message}\nMessage: {chatbot.user_messages[-1]}\n"
-    )
+    log_chat_details(chatbot)
+
     try:
         content = chatbot.chat(chatbot.system_message, chatbot.user_messages, chatbot.model, chatbot.temperature)
     except ChatCompletionError as e:
-        logging.error(f'Could not finish chat completion: {e}')
+        logger.error(f'Could not finish chat completion: {e}')
         if args.conversation:
             chatbot.append_user_message('There was an error requesting the API. Please try again.')
         else:
             chatbot.user_messages = []
         sys.exit(1)
     except Exception as e:
-        logging.error(f'An unexpected error occurred: {e}. Please check specified arguments and settings.')
+        logger.error(f'An unexpected error occurred: {e}. Please check specified arguments and settings.')
         if args.conversation:
             chatbot.append_user_message('There was an error requesting the API. Please try again.')
         else:
@@ -136,13 +146,13 @@ def main():
         try:
             Speaker(client).create_audio(text=content, audio_save=True, audio_file_path=args.save_audio)
         except CreateAudioError as e:
-            logging.error(f'Could not create audio: {e}')
+            logger.error(f'Could not create audio: {e}')
             sys.exit(1)
         except SaveAudioError as e:
-            logging.error(f'Could not save audio: {e}')
+            logger.error(f'Could not save audio: {e}')
             sys.exit(1)
         except Exception as e:
-            logging.error(f"An unexpected error occurred: {e}")
+            logger.error(f"An unexpected error occurred: {e}")
             sys.exit(1)
 
     if args.conversation:

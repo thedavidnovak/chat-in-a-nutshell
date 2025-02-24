@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 
+import httpx
+import importlib
 import json
 import logging
+import os
+import re
 from typing import List, Optional, Tuple
 from openai import APIConnectionError, RateLimitError, APIStatusError
 
-logging.basicConfig(encoding="utf-8", format="%(message)s", level=logging.INFO)
+
 logger = logging.getLogger(__name__)
-logging.getLogger("httpx").setLevel(logging.WARNING)
+
+TOOLS_URL = os.getenv('TOOLS_URL', None)
 
 class ChatCompletionError(Exception):
     pass
@@ -22,6 +27,23 @@ class Chatbot:
         except FileNotFoundError:
             self.config: dict = {}
             self.save_config()
+
+    def load_tools_metadata(self) -> None:
+        """Load tools metadata."""
+        if not TOOLS_URL:
+            logger.warning("TOOLS_URL not set. Provide a URL to the raw contents, e.g., raw path to example_tools.json.")
+            self.tools = []
+            return
+        try:
+            response = httpx.get(TOOLS_URL)
+            response.raise_for_status()
+            self.tools = response.json()
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            logger.error(f"Failed to load tools: {e}")
+            self.tools = []
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            self.tools = []
 
     def load_config(self) -> None:
         """Load config."""
@@ -38,44 +60,154 @@ class Chatbot:
 
     def chat_with_openai(self, system: str, user_assistant: List[str], model: str, temperature: float) -> Tuple[str, int]:
         """Chat with OpenAI."""
+        self.validate_inputs(system, user_assistant)
+        messages = self.construct_messages(system, user_assistant, model)
+
+        try:
+            response = self.send_request(model, messages, temperature)
+            return self.handle_response(response, messages, model)
+        except (APIConnectionError, RateLimitError, APIStatusError) as e:
+            self.handle_api_exception(e)
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            raise ChatCompletionError("An unexpected error occurred.") from e
+
+    def validate_inputs(self, system: str, user_assistant: List[str]) -> None:
+        """Validate input types."""
         if not isinstance(system, str):
             raise ValueError("`system` should be a string")
         if not all(isinstance(msg, str) for msg in user_assistant):
             raise ValueError("`user_assistant` should be a list of strings")
 
+    def construct_messages(self, system: str, user_assistant: List[str], model: str) -> List[dict]:
+        """Construct the message list for OpenAI API."""
         system_msg = [{"role": "system", "content": system}]
         user_assistant_msgs = [
-            {"role": "assistant", "content": user_assistant[i]}
-            if i % 2
-            else {"role": "user", "content": user_assistant[i]}
-            for i in range(len(user_assistant))
+            {"role": "assistant", "content": msg} if i % 2 else {"role": "user", "content": msg}
+            for i, msg in enumerate(user_assistant)
         ]
-        msgs = system_msg + user_assistant_msgs
 
-        if 'o1' in model:
-            msgs = user_assistant_msgs
-            temperature = 1
+        return system_msg + user_assistant_msgs
 
-        try:
-            response = self.client.chat.completions.create(model=model, messages=msgs, temperature=temperature)
-            response_dict = dict(response)
-            choice = response_dict['choices'][0]
-            if choice.finish_reason != "stop":
-                raise RuntimeError(f"The status code was {choice.finish_reason}.")
-            return choice.message.content, response_dict['usage'].total_tokens
+    def send_request(self, model: str, messages: List[dict], temperature: float) -> object:
+        """Send the chat completion request to OpenAI."""
 
-        except APIConnectionError as e:
-            logging.error(f'The server could not be reached: {e.__cause__}')
-            raise ChatCompletionError('The server could not be reached.') from e
-        except RateLimitError as e:
-            logging.error(f'A 429 status code recieved (RateLimitError): {e}.')
-            raise ChatCompletionError('A 429 status code recieved. Check your usage and limit configuration.') from e
-        except APIStatusError as e:
-            logging.error(f'APIStatusError: {e}')
-            raise ChatCompletionError('Another non-200-range status code was received.') from e
-        except Exception as e:
-            logging.error(f'Error while calling OpenAI API: {e}')
-            raise ChatCompletionError('Another non-200-range status code was received.') from e
+        request_params = {
+            "model": model,
+            "messages": messages,
+        }
+
+        if self.use_tools and self.tools:
+            request_params["tools"] = [tool['description'] for tool in self.tools if 'description' in tool]
+            request_params["parallel_tool_calls"] = False
+
+        if re.match(r'^o\d', model):
+            # For o\d models, use fixed temperature and include reasoning_effort, exclude parallel_tool_calls.
+            request_params["temperature"] = 1.0
+            request_params["reasoning_effort"] = self.reasoning_effort
+            request_params.pop("parallel_tool_calls", None)
+        else:
+            request_params["temperature"] = temperature
+
+        logger.debug(f"Sending request to OpenAI with model: {model}, temperature: {request_params['temperature']}")
+
+        logger.debug(f"Model: {model}, Tools included: {'tools' in request_params}")
+        return self.client.chat.completions.create(**request_params)
+
+    def handle_response(self, response, messages: List[dict], model: str) -> Tuple[str, int]:
+        """Process the OpenAI API response."""
+        response_dict = dict(response)
+        choice = response_dict['choices'][0]
+
+        if choice.finish_reason not in ["stop", "tool_calls"]:
+            raise RuntimeError(f"The finish reason was {choice.finish_reason}.")
+
+        if choice.finish_reason == 'tool_calls':
+            return self.handle_tool_call(response, messages, model)
+
+        return choice.message.content, response_dict['usage'].total_tokens
+
+    def handle_tool_call(self, response, messages: List[dict], model: str) -> Tuple[str, int]:
+        """Handle tool call responses from OpenAI."""
+        tool_call = response.choices[0].message.tool_calls[0]
+        tool_call_dict = dict(tool_call)
+
+        self.log_tool_call(tool_call_dict)
+
+        if not self.confirm_tool_execution():
+            return self.abort_tool_execution(response, messages, tool_call_dict, model)
+
+        result = self.execute_tool(tool_call_dict)
+        return self.complete_tool_execution(response, messages, tool_call_dict, result, model)
+
+    def log_tool_call(self, tool_call_dict: dict) -> None:
+        """Log the details of the tool call."""
+        func = tool_call_dict['function']
+        func_def = next(
+            (tool['definition'] for tool in self.tools if tool['name'] == func.name),
+            ''
+        )
+        truncated_def = func_def[:50] + ('...' if len(func_def) > 50 else '')
+        logger.info(
+            "I would like to execute the following function call:\n"
+            f"  ID        : {tool_call_dict['id']}\n"
+            f"  Function  : {func.name}\n"
+            f"  Arguments : {func.arguments}\n"
+            f"  Type      : {tool_call_dict['type']}\n"
+            f"  Definition: (see truncated definition below, use ch --available-tools to list all available tools)\n\n{truncated_def}\n"
+        )
+
+    def confirm_tool_execution(self) -> bool:
+        """Ask the user to confirm tool execution."""
+        response = input('Do you agree to proceed? (y/n): ').strip().lower()
+        print()
+        return response == 'y'
+
+    def abort_tool_execution(self, response, messages: List[dict], tool_call_dict: dict, model: str) -> Tuple[str, int]:
+        """Handle the scenario where tool execution is aborted by the user."""
+        self.append_user_message(str(dict(response.choices[0].message)))
+        user_response = [
+            {"role": "tool", "tool_call_id": tool_call_dict['id'], "content": 'The tool call was not successful. Please try again or ask for instructions!'}
+        ]
+        self.append_user_message(str(user_response))
+        new_messages = messages + [dict(response.choices[0].message)] + user_response
+        not_ok_response = self.client.chat.completions.create(model=model, messages=new_messages)
+        not_ok_dict = dict(not_ok_response)
+        not_ok_choice = not_ok_dict['choices'][0]
+        return not_ok_choice.message.content, not_ok_dict['usage'].total_tokens
+
+    def execute_tool(self, tool_call_dict: dict) -> dict:
+        """Execute the tool based on the tool call dictionary."""
+        tool = dict(tool_call_dict['function'])
+        tool_name = tool['name']
+        tool_args = json.loads(tool['arguments'])
+        logger.debug(f"Executing tool '{tool_name}' with arguments: {tool_args}")
+        return self.call_tool(tool_name, **tool_args)
+
+    def complete_tool_execution(self, response, messages: List[dict], tool_call_dict: dict, result: dict, model: str) -> Tuple[str, int]:
+        """Handle the completion of a tool execution."""
+        function_call_result_message = [
+            {"role": "tool", "tool_call_id": tool_call_dict['id'], "content": json.dumps(result)}
+        ]
+        self.append_user_message(str(dict(response.choices[0].message)))
+        self.append_user_message(str(function_call_result_message))
+        new_messages = messages + [dict(response.choices[0].message)] + function_call_result_message
+        complete_response = self.client.chat.completions.create(model=model, messages=new_messages)
+        complete_dict = dict(complete_response)
+        complete_choice = complete_dict['choices'][0]
+        return complete_choice.message.content, complete_dict['usage'].total_tokens
+
+    def handle_api_exception(self, exception: Exception) -> None:
+        """Handle API exceptions by logging and raising a ChatCompletionError."""
+        if isinstance(exception, APIConnectionError):
+            logger.error(f'The server could not be reached: {exception.__cause__}')
+            raise ChatCompletionError('The server could not be reached.') from exception
+        elif isinstance(exception, RateLimitError):
+            logger.error(f'A 429 status code received (RateLimitError): {exception}.')
+            raise ChatCompletionError('A 429 status code received. Check your usage and limit configuration.') from exception
+        elif isinstance(exception, APIStatusError):
+            logger.error(f'APIStatusError: {exception}')
+            raise ChatCompletionError('A non-200 status code was received from the API.') from exception
 
     def chat(self, system: str, user_assistant: List[str], model: str, temperature: float) -> str:
         """Chat."""
@@ -118,6 +250,17 @@ class Chatbot:
         self.save_config()
 
     @property
+    def reasoning_effort(self) -> str:
+        """Get reasoning effort; default to 'low'."""
+        return self.config.get("reasoning_effort", "low")
+
+    @reasoning_effort.setter
+    def reasoning_effort(self, effort: str) -> None:
+        """Set reasoning effort."""
+        self.config["reasoning_effort"] = effort
+        self.save_config()
+
+    @property
     def user_messages(self) -> List[str]:
         """Get user messages."""
         return self.config.get("user_messages", [""])
@@ -135,14 +278,32 @@ class Chatbot:
         self.config["user_messages"].append(message)
         self.save_config()
 
+    @property
+    def use_tools(self) -> bool:
+        """Get tool usage preference."""
+        return self.config.get("use_tools", False)
+
+    @use_tools.setter
+    def use_tools(self, use: bool) -> None:
+        """Set tool usage preference."""
+        self.config["use_tools"] = use
+        self.save_config()
+
     def get_model_list(self, filter_prefix: Optional[str] = None) -> str:
         """Get models."""
         models = self.client.models.list()
         sorted_models = [d.id for d in sorted(models, key=lambda x: x.created, reverse=True)]
         if filter_prefix:
             sorted_models = [model for model in sorted_models if model.startswith(filter_prefix)]
-        return "Currently available models:\n{}.\nTo check all available models refer to the OpenAI documentation.".format(
-            ", ".join(sorted_models)
+
+        if not sorted_models:
+            return "No models available."
+
+        model_list = "\n".join(f"- {model}" for model in sorted_models)
+        return (
+            "Currently available models:\n"
+            f"{model_list}\n"
+            "To check all available models, refer to the OpenAI documentation."
         )
 
     def get_chatgpt_model_list(self) -> str:
@@ -152,3 +313,40 @@ class Chatbot:
     def get_openai_model_list(self) -> str:
         """Get OpenAI models."""
         return self.get_model_list()
+
+    def get_tool_list(self) -> str:
+        """Get list of available tools."""
+        if not self.tools:
+            return "No tools are currently available."
+
+        tool_list = []
+        for tool in self.tools:
+            if 'name' in tool and 'description' in tool:
+                tool_info = {
+                    "name": tool['name'],
+                    "description": tool['description'],
+                    "definition": tool['definition']
+                }
+                tool_list.append(json.dumps(tool_info, indent=4))
+            else:
+                logger.warning(f"Invalid tool entry detected: {tool}")
+
+        if not tool_list:
+            return "No valid tools are currently available."
+
+        return "\n\n".join(tool_list)
+
+    def call_tool(self, tool_name: str, *args, **kwargs):
+        """Call a tool by name."""
+        tool = next((t for t in self.tools if t['name'] == tool_name), None)
+        if not tool:
+            raise ValueError(f"Tool '{tool_name}' not found.")
+
+        # Execute the function definition
+        local_namespace = {}
+        exec(tool['definition'], {}, local_namespace)
+        func = local_namespace.get(tool_name)
+        if not func:
+            raise ValueError(f"Function '{tool_name}' could not be executed.")
+
+        return func(*args, **kwargs)
