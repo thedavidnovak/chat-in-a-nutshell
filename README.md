@@ -65,10 +65,24 @@ Specify the path to save the audio response using the `--save-audio` argument.
 ### --available-models
 
 List available OpenAI models using the `--available-models` argument.
+Not all models are suitable to use with this script.
 
 ### --available-models-gpt
 
 List available ChatGPT models using the `--available-models-gpt` argument.
+Not all models are suitable to use with this script.
+
+### --available-tools
+
+List available tools for function calling using the `--available-tools` argument.
+
+### --use-tools, --no-tools
+
+Specify `--use-tools` to enable the model the access to user-defined tools. Specify `--no-tools` to disable it. The option is saved for future requests. Tools are disabled by default. **Note:** To use tools, you must set the `TOOLS_URL` environment variable to the URL path of your tool definitions. You can refer to `example_tools.json` in the repository to see the example tool definition file structure.
+
+### -e, --reasoning-effort
+Set the reasoning effort by specifying `--reasoning-effort, -e`. Choose one of the available options: low, medium, high. The option is saved for future requests. The default value for this script is low reasoning effort. This configuration is only applicable to reasoning models.
+
 
 ## Requirements
 
@@ -90,6 +104,17 @@ This script was developed for chatting with OpenAI's ChatGPT from the comfort of
 Please note that there is no warranty for script functionality. Also, keep in mind that it is suitable for brief and straightforward messages.
 
 ## Release Notes
+
+### Version 1.4.0 (2025-02-24)
+- **OpenAI requests refactoring**:
+  - Added back system messages for `o1` and `o3` models, now supported as developer messages.
+  - Introduced an option to specify reasoning effort for reasoning models.
+  - Improved readability of `--available-models` and `--available-models-gpt` outputs.
+
+- **Tool calling**:
+  - The feature can be toggled with `--use-tools` to enable and `--no-tools` to disable.
+  - To use your own tools, specify the URL path using the `TOOLS_URL` environment variable. Check `example_tools.json` in the repo for the example tool definition file structure.
+  - Review available tools with `--available-tools`.
 
 ### Version 1.3.0 (2024-11-17)
 - **o1 model support**:
