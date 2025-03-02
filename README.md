@@ -1,6 +1,6 @@
 # chat-in-a-nutshell
 
-This script provides a simple way to chat with OpenAI. It allows you to communicate with the ChatGPT model directly from your terminal.
+This script provides a simple way to chat with AI models from OpenAI and Anthropic directly from your terminal. It lets you send messages and receive responses without leaving the command line interface.
 
 ## Example 
 ### Input
@@ -64,7 +64,7 @@ Specify the path to save the audio response using the `--save-audio` argument.
 
 ### --available-models
 
-List available OpenAI models using the `--available-models` argument.
+List available provider models using the `--available-models` argument.
 Not all models are suitable to use with this script.
 
 ### --available-models-gpt
@@ -85,12 +85,19 @@ Set the reasoning effort by specifying `--reasoning-effort, -e`. Choose one of t
 
 ### -p, --provider
 Set the provider by specifying `--provider, -p`. Choose one of the available options: `openai`, `anthropic`. The option is saved for future requests. The default value for this script is `openai`.
+Example usage:
+```
+$ ch -p anthropic --model claude-3-7-sonnet-latest
+```
+```
+$ ch -p openai --model gpt-4o
+```
 
 ## Requirements
 
 To use this script, you will need to have the following:
 - Python 3.8 or higher
-- An OpenAI API key (stored in an environment variable `OPENAI_API_KEY`)
+- A provider API key (stored in an environment variable `OPENAI_API_KEY` for provider `openai`, `ANTHROPIC_API_KEY` for `anthropic`)
 
 
 ## Usage
@@ -102,10 +109,16 @@ To use the script:
 
 ## Limitations
 
-This script was developed for chatting with OpenAI's ChatGPT from the comfort of the terminal. The API used in the script incurs charges (depending on its usage). For more information about pricing, refer to the OpenAI documentation.
+This script was developed for chatting with OpenAI's ChatGPT from the comfort of the terminal. The API used in the script incurs charges (depending on its usage). For more information about pricing, refer to the provider documentation.
 Please note that there is no warranty for script functionality. Also, keep in mind that it is suitable for brief and straightforward messages.
 
 ## Release Notes
+
+### Version 1.5.1 (2025-03-02)
+- Added `--max-tokens` parameter to limit token generation (default: 4096)
+- Enhanced error handling with formatted error messages
+- Improved provider model listings with tabular display
+- Renamed main script to `chat_provider.py` for clarity
 
 ### Version 1.5.0 (2025-03-02)
 - **Anthropic Provider Integration**:

@@ -29,7 +29,8 @@ class Chatbot:
         self.provider = provider or self.provider
         self.client = self.create_client()
 
-    def get_api_key(self, provider_key):
+    @staticmethod
+    def get_api_key(provider_key):
         api_key = os.environ.get(provider_key)
         if not api_key:
             logger.error(f'{provider_key} environment variable not set.')
@@ -68,32 +69,32 @@ class Chatbot:
 
     def create_client(self) -> object:
         if self.provider == 'openai':
-            api_key = self.get_api_key('OPENAI_API_KEY')
+            api_key = Chatbot.get_api_key('OPENAI_API_KEY')
             return OpenAI(api_key=api_key)
         elif self.provider == 'anthropic':
-            api_key = self.get_api_key('ANTHROPIC_API_KEY')
+            api_key = Chatbot.get_api_key('ANTHROPIC_API_KEY')
             return Anthropic(api_key=api_key)
         else:
             logger.error("Unknown provider selected: %s", self.provider)
             sys.exit(1)
 
-    def chat_with_provider(self, system: str, user_assistant: List[str], model: str, temperature: float) -> Tuple[str, int]:
+    def chat_with_provider(self, system: str, user_assistant: List[str], model: str, temperature: float, max_tokens: int) -> Tuple[str, int]:
         """Chat with OpenAI."""
-        self.validate_inputs(system, user_assistant)
+        Chatbot.validate_inputs(system, user_assistant)
         messages = self.construct_messages(system, user_assistant, model)
 
         try:
-            response = self.send_request(model, messages, temperature)
+            response = self.send_request(model, messages, temperature, max_tokens)
             if self.provider == 'anthropic':
                 return self.handle_anthropic_response(response)
             return self.handle_openai_response(response, messages, model)
         except (APIConnectionError, RateLimitError, APIStatusError, NotFoundError) as e:
             self.handle_api_exception(e)
         except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            raise ChatCompletionError("An unexpected error occurred.") from e
+            self.handle_api_exception(e)
 
-    def validate_inputs(self, system: str, user_assistant: List[str]) -> None:
+    @staticmethod
+    def validate_inputs(system: str, user_assistant: List[str]) -> None:
         """Validate input types."""
         if not isinstance(system, str):
             raise ValueError("`system` should be a string")
@@ -113,17 +114,18 @@ class Chatbot:
 
         return system_msg + user_assistant_msgs
 
-    def send_request(self, model: str, messages: List[dict], temperature: float) -> object:
+    def send_request(self, model: str, messages: List[dict], temperature: float, max_tokens: int) -> object:
         """Send the chat completion request to OpenAI."""
 
         request_params = {
             "model": model,
             "messages": messages,
+            "max_completion_tokens": max_tokens,
         }
 
         if self.provider == 'anthropic':
             request_params['messages'] = [msg for msg in messages if msg["role"] not in {"system", "developer"}]
-            request_params['max_tokens'] = 8000
+            request_params['max_tokens'] = request_params.pop('max_completion_tokens')
             request_params['system'] = self.system_message
             return self.client.messages.create(**request_params)
 
@@ -189,7 +191,7 @@ class Chatbot:
 
         self.log_tool_call(tool_call_dict)
 
-        if not self.confirm_tool_execution():
+        if not Chatbot.confirm_tool_execution():
             return self.abort_tool_execution(response, messages, tool_call_dict, model)
 
         result = self.execute_tool(tool_call_dict)
@@ -212,7 +214,8 @@ class Chatbot:
             f"  Definition: (see truncated definition below, use ch --available-tools to list all available tools)\n\n{truncated_def}\n"
         )
 
-    def confirm_tool_execution(self) -> bool:
+    @staticmethod
+    def confirm_tool_execution() -> bool:
         """Ask the user to confirm tool execution."""
         response = input('Do you agree to proceed? (y/n): ').strip().lower()
         print()
@@ -253,23 +256,173 @@ class Chatbot:
         return complete_choice.message.content, complete_dict['usage'].total_tokens
 
     def handle_api_exception(self, exception: Exception) -> None:
-        """Handle API exceptions by logging and raising a ChatCompletionError."""
-        if isinstance(exception, APIConnectionError):
-            logger.error(f'The server could not be reached: {exception.__cause__}')
-            raise ChatCompletionError('The server could not be reached.') from exception
-        elif isinstance(exception, RateLimitError):
-            logger.error(f'A 429 status code received (RateLimitError): {exception}.')
-            raise ChatCompletionError('A 429 status code received. Check your usage and limit configuration.') from exception
-        elif isinstance(exception, APIStatusError):
-            logger.error(f'APIStatusError: {exception}')
-            raise ChatCompletionError('A non-200 status code was received from the API.') from exception
-        elif isinstance(exception, NotFoundError):
-            logger.error(f'NotFoundError: {exception}')
-            raise ChatCompletionError('Did you set an existing model for the current provider?') from exception
+        """Handle API exceptions with user-friendly error messages."""
+        import json
 
-    def chat(self, system: str, user_assistant: List[str], model: str, temperature: float) -> str:
+        BOX_WIDTH = 60
+        MAX_TEXT_WIDTH = BOX_WIDTH - 6
+
+        def format_lines(text, max_width=MAX_TEXT_WIDTH):
+            """Format text to fit within specified width."""
+            if not isinstance(text, str):
+                try:
+                    if isinstance(text, dict):
+                        lines = []
+                        for k, v in text.items():
+                            if isinstance(v, dict):
+                                lines.append(f"'{k}': ")
+                                for sk, sv in v.items():
+                                    lines.append(f"  '{sk}': {repr(sv)}")
+                            else:
+                                lines.append(f"'{k}': {repr(v)}")
+                        text = "\n".join(lines)
+                    else:
+                        text = json.dumps(text, indent=2)
+                except:
+                    text = str(text)
+
+            result = []
+            for para in text.split('\n'):
+                para = para.rstrip()
+                if not para:
+                    result.append(f"{'':{BOX_WIDTH}}")
+                    continue
+
+                while para:
+                    if len(para) <= max_width:
+                        # Use left alignment with '<' specifier
+                        result.append(f"  {para:<{max_width}}  ")
+                        break
+
+                    # Find the last space within max_width
+                    cutoff = max_width
+                    while cutoff > 0 and not para[cutoff-1].isspace():
+                        cutoff -= 1
+
+                    # If no space found, force break at max_width
+                    if cutoff == 0:
+                        cutoff = max_width
+
+                    # Use left alignment with '<' specifier
+                    result.append(f"  {para[:cutoff]:<{max_width}}  ")
+                    para = para[cutoff:].lstrip()
+
+            return result or [f"{'':{BOX_WIDTH}}"]
+
+        # Box templates with consistent width
+        box_title = f"─────────────────── {{title}} ───────────────────"
+        empty = f"{'':{BOX_WIDTH}}"
+
+        # Rest of the error configs remain the same
+        error_configs = {
+            APIConnectionError: {
+                "title": "CONNECTION ERROR",
+                "intro": "Unable to connect to the API server.",
+                "what": lambda e: f"The application couldn't reach the server. {str(e.__cause__)[:MAX_TEXT_WIDTH]}{'...' if len(str(e.__cause__)) > MAX_TEXT_WIDTH else ''}",
+                "steps": [
+                    "Check your internet connection",
+                    "Verify your firewall isn't blocking the connection",
+                    "Confirm the API endpoint is correct",
+                    "Try again in a few minutes"
+                ]
+            },
+            RateLimitError: {
+                "title": "RATE LIMIT ERROR",
+                "intro": "API rate limit has been exceeded.",
+                "what": "The API returned a 429 status code, indicating you've hit the request rate limits.",
+                "steps": [
+                    "Reduce the frequency of your API calls",
+                    "Implement exponential backoff retry strategy",
+                    "Check your API usage limits in your account",
+                    "Consider upgrading your API tier if available"
+                ]
+            },
+            APIStatusError: {
+                "title": "API STATUS ERROR",
+                "intro": None,
+                "what": "The API returned an error status code.",
+                "details": lambda e: f"Error code: {getattr(e, 'status_code', 'unknown')} - {str(e)}",
+                "steps": [
+                    "Check the error details above",
+                    "Verify your API key is valid and not expired",
+                    "Ensure your request format is correct",
+                    "If persistent, check API service status"
+                ]
+            },
+            NotFoundError: {
+                "title": "NOT FOUND ERROR",
+                "intro": "The requested resource was not found.",
+                "what": "The API couldn't find the resource you're looking for. This often means an invalid model name or endpoint.",
+                "steps": [
+                    "Check that you've specified a valid model name",
+                    "Ensure the model is available for your provider",
+                    "Verify you have permission to access this resource",
+                    "Check API documentation for supported models"
+                ]
+            }
+        }
+
+        # Determine error type and build message
+        for error_type, config in error_configs.items():
+            if isinstance(exception, error_type):
+                parts = [f"\n{box_title.format(title=config['title'])}", empty]
+
+                if config.get("intro"):
+                    parts.append(f"  {config['intro']:<{MAX_TEXT_WIDTH}}  ")
+                    parts.append(empty)
+
+                what_happened = config.get("what")
+                if callable(what_happened):
+                    what_text = what_happened(exception)
+                    parts.append(f"  What happened: {what_text[:MAX_TEXT_WIDTH-15]:<{MAX_TEXT_WIDTH-15}}  ")
+                    if len(what_text) > MAX_TEXT_WIDTH-15:
+                        parts.extend(format_lines(what_text[MAX_TEXT_WIDTH-15:]))
+                elif what_happened:
+                    parts.append(f"  What happened: {what_happened[:MAX_TEXT_WIDTH-15]:<{MAX_TEXT_WIDTH-15}}  ")
+                    if len(what_happened) > MAX_TEXT_WIDTH-15:
+                        parts.extend(format_lines(what_happened[MAX_TEXT_WIDTH-15:]))
+
+                if config.get("details"):
+                    parts.append(empty)
+                    if callable(config["details"]):
+                        parts.extend(format_lines(config["details"](exception)))
+                    else:
+                        parts.extend(format_lines(config["details"]))
+
+                parts.append(empty)
+                parts.append(f"  Troubleshooting steps:{'':{MAX_TEXT_WIDTH-22}}  ")
+                for i, step in enumerate(config["steps"], 1):
+                    parts.append(f"  {i}. {step:{MAX_TEXT_WIDTH-4}}  ")
+
+                parts.extend([empty, ""])
+                raise ChatCompletionError("\n".join(parts)) from exception
+
+        # Fallback for unhandled exception types
+        err_type = exception.__class__.__name__
+        parts = [
+            f"\n{box_title.format(title='UNEXPECTED ERROR')}",
+            empty,
+            f"  An unexpected error occurred when calling the API.{'':{MAX_TEXT_WIDTH-50}}  ",
+            empty,
+            f"  Error type: {err_type:{MAX_TEXT_WIDTH-13}}  "
+        ]
+        parts.extend(format_lines(f"Details: {str(exception)}"))
+        parts.extend([
+            empty,
+            f"  Troubleshooting steps:{'':{MAX_TEXT_WIDTH-22}}  ",
+            f"  1. Check the error details above{'':{MAX_TEXT_WIDTH-31}}  ",
+            f"  2. Review your code for potential issues{'':{MAX_TEXT_WIDTH-38}}  ",
+            f"  3. Check your API credentials{'':{MAX_TEXT_WIDTH-29}}  ",
+            f"  4. Try again or contact support if the issue persists{'':{MAX_TEXT_WIDTH-52}}  ",
+            empty,
+            ""
+        ])
+
+        raise ChatCompletionError("\n".join(parts)) from exception
+
+    def chat(self, system: str, user_assistant: List[str], model: str, temperature: float, max_tokens: int) -> str:
         """Chat."""
-        content, tokens = self.chat_with_provider(system, user_assistant, model, temperature)
+        content, tokens = self.chat_with_provider(system, user_assistant, model, temperature, max_tokens)
         print(content)
         logger.info(f"({tokens} tokens used.)")
         return content
@@ -319,6 +472,17 @@ class Chatbot:
         self.save_config()
 
     @property
+    def max_tokens(self) -> int:
+        """Get max_tokens; default to 4096."""
+        return self.config.get("max_tokens", 4096)
+
+    @max_tokens.setter
+    def max_tokens(self, max_tokens: int) -> None:
+        """Set max_tokens."""
+        self.config["max_tokens"] = max_tokens
+        self.save_config()
+
+    @property
     def provider(self) -> str:
         """Get provider; default to 'openai'."""
         return self.config.get("provider", "openai")
@@ -358,34 +522,106 @@ class Chatbot:
         self.config["use_tools"] = use
         self.save_config()
 
-    def get_model_list(self, filter_prefix: Optional[str] = None) -> str:
-        """Get models."""
-        models = self.client.models.list()
-        sorted_models = [d.id for d in sorted(models, key=lambda x: x.created, reverse=True)]
+    @staticmethod
+    def display_openai_models(model_list, filter_prefix: Optional[str] = None) -> str:
+        """Get models in a well-formatted tabular display."""
+        import datetime
+        from io import StringIO
+
+        models = model_list
+        sorted_models = sorted(models, key=lambda x: x.created, reverse=True)
+
         if filter_prefix:
-            sorted_models = [model for model in sorted_models if model.startswith(filter_prefix)]
+            sorted_models = [model for model in sorted_models if model.id.startswith(filter_prefix)]
 
         if not sorted_models:
             return "No models available."
 
-        model_list = "\n".join(f"- {model}" for model in sorted_models)
-        return (
-            "Currently available models:\n"
-            f"{model_list}\n"
-            "To check all available models, refer to the OpenAI documentation."
-        )
+        # Calculate column widths
+        id_width = max(len(model.id) for model in sorted_models) + 2
+        id_width = max(id_width, len("MODEL ID") + 2)
+
+        # Create output buffer
+        output = StringIO()
+
+        # Print header
+        output.write("\n=== AVAILABLE OPENAI MODELS ===\n\n")
+
+        # Print header row
+        header = f"{'MODEL ID':<{id_width}} | {'CREATED DATE'}"
+        output.write(header + "\n")
+        output.write("-" * len(header) + "\n")
+
+        # Print each model's information
+        for model in sorted_models:
+            created_date = datetime.datetime.fromtimestamp(model.created).strftime("%B %d, %Y")
+            output.write(f"{model.id:<{id_width}} | {created_date}\n")
+
+        # Print footer
+        output.write("\n" + "-" * len(header) + "\n")
+        output.write(f"Total models shown: {len(sorted_models)}\n")
+        output.write("To check all available models, refer to the OpenAI documentation.\n")
+
+        return output.getvalue()
+
+    @staticmethod
+    def display_anthropic_models(model_list, filter_prefix: Optional[str] = None) -> str:
+        """Get Anthropic models in a well-formatted tabular display."""
+        from io import StringIO
+
+        models = model_list.data
+
+        if filter_prefix:
+            models = [model for model in models if model.id.startswith(filter_prefix)]
+
+        if not models:
+            return "No models available."
+
+        # Calculate column widths
+        id_width = max(len(model.id) for model in models) + 2
+        id_width = max(id_width, len("MODEL ID") + 2)
+        name_width = max(len(model.display_name) for model in models) + 2
+        name_width = max(name_width, len("DISPLAY NAME") + 2)
+
+        # Create output buffer
+        output = StringIO()
+
+        # Print header
+        output.write("\n=== AVAILABLE ANTHROPIC MODELS ===\n\n")
+
+        # Print header row
+        header = f"{'MODEL ID':<{id_width}} | {'DISPLAY NAME':<{name_width}} | {'RELEASE DATE'}"
+        output.write(header + "\n")
+        output.write("-" * len(header) + "\n")
+
+        # Print each model's information
+        for model in models:
+            release_date = model.created_at.strftime("%B %d, %Y")
+            output.write(f"{model.id:<{id_width}} | {model.display_name:<{name_width}} | {release_date}\n")
+
+        # Print footer
+        output.write("\n" + "-" * len(header) + "\n")
+        if model_list.has_more:
+            output.write("Note: More models are available. These are the most recent models.\n")
+        output.write(f"Total models shown: {len(models)}\n")
+        output.write("To check all available models, refer to the Anthropic documentation.\n")
+
+        return output.getvalue()
 
     def get_chatgpt_model_list(self) -> str:
         """Get ChatGPT models."""
-        return self.get_model_list(filter_prefix="gpt")
+        openai_models = self.client.models.list()
+        return Chatbot.display_openai_models(openai_models, filter_prefix="gpt")
 
     def get_openai_model_list(self) -> str:
         """Get OpenAI models."""
-        return self.get_model_list()
+        openai_models = self.client.models.list()
+        return Chatbot.display_openai_models(openai_models)
 
     def get_anthropic_model_list(self) -> str:
-        """Get OpenAI models."""
-        return self.client.models.list(limit=5)
+        """Get Anthropic models."""
+        anthropic_models = self.client.models.list()
+        return Chatbot.display_anthropic_models(anthropic_models)
 
     def get_tool_list(self) -> str:
         """Get list of available tools."""
