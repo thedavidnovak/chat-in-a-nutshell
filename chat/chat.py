@@ -7,8 +7,8 @@ import logging
 import os
 import re
 from typing import List, Optional, Tuple
-from openai import APIConnectionError, RateLimitError, APIStatusError
-
+from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
+from anthropic import Anthropic, NotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -18,15 +18,23 @@ class ChatCompletionError(Exception):
     pass
 
 class Chatbot:
-    def __init__(self, config_file: str, client: object) -> None:
+    def __init__(self, config_file: str, provider: str = None) -> None:
         """Initialize Chatbot."""
-        self.config_file: str = config_file
-        self.client: object = client
+        self.config_file = config_file
         try:
             self.load_config()
         except FileNotFoundError:
-            self.config: dict = {}
+            self.config = {}
             self.save_config()
+        self.provider = provider or self.provider
+        self.client = self.create_client()
+
+    def get_api_key(self, provider_key):
+        api_key = os.environ.get(provider_key)
+        if not api_key:
+            logger.error(f'{provider_key} environment variable not set.')
+            sys.exit(1)
+        return api_key
 
     def load_tools_metadata(self) -> None:
         """Load tools metadata."""
@@ -58,15 +66,28 @@ class Chatbot:
         with open(self.config_file, "w") as f:
             json.dump(self.config, f, indent=4)
 
-    def chat_with_openai(self, system: str, user_assistant: List[str], model: str, temperature: float) -> Tuple[str, int]:
+    def create_client(self) -> object:
+        if self.provider == 'openai':
+            api_key = self.get_api_key('OPENAI_API_KEY')
+            return OpenAI(api_key=api_key)
+        elif self.provider == 'anthropic':
+            api_key = self.get_api_key('ANTHROPIC_API_KEY')
+            return Anthropic(api_key=api_key)
+        else:
+            logger.error("Unknown provider selected: %s", self.provider)
+            sys.exit(1)
+
+    def chat_with_provider(self, system: str, user_assistant: List[str], model: str, temperature: float) -> Tuple[str, int]:
         """Chat with OpenAI."""
         self.validate_inputs(system, user_assistant)
         messages = self.construct_messages(system, user_assistant, model)
 
         try:
             response = self.send_request(model, messages, temperature)
-            return self.handle_response(response, messages, model)
-        except (APIConnectionError, RateLimitError, APIStatusError) as e:
+            if self.provider == 'anthropic':
+                return self.handle_anthropic_response(response)
+            return self.handle_openai_response(response, messages, model)
+        except (APIConnectionError, RateLimitError, APIStatusError, NotFoundError) as e:
             self.handle_api_exception(e)
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
@@ -81,7 +102,10 @@ class Chatbot:
 
     def construct_messages(self, system: str, user_assistant: List[str], model: str) -> List[dict]:
         """Construct the message list for OpenAI API."""
-        system_msg = [{"role": "system", "content": system}]
+        if re.match(r'^o\d', model):
+            system_msg = [{"role": "developer", "content": system}]
+        else:
+            system_msg = [{"role": "system", "content": system}]
         user_assistant_msgs = [
             {"role": "assistant", "content": msg} if i % 2 else {"role": "user", "content": msg}
             for i, msg in enumerate(user_assistant)
@@ -96,6 +120,12 @@ class Chatbot:
             "model": model,
             "messages": messages,
         }
+
+        if self.provider == 'anthropic':
+            request_params['messages'] = [msg for msg in messages if msg["role"] not in {"system", "developer"}]
+            request_params['max_tokens'] = 8000
+            request_params['system'] = self.system_message
+            return self.client.messages.create(**request_params)
 
         if self.use_tools and self.tools:
             request_params["tools"] = [tool['description'] for tool in self.tools if 'description' in tool]
@@ -114,7 +144,7 @@ class Chatbot:
         logger.debug(f"Model: {model}, Tools included: {'tools' in request_params}")
         return self.client.chat.completions.create(**request_params)
 
-    def handle_response(self, response, messages: List[dict], model: str) -> Tuple[str, int]:
+    def handle_openai_response(self, response, messages: List[dict], model: str) -> Tuple[str, int]:
         """Process the OpenAI API response."""
         response_dict = dict(response)
         choice = response_dict['choices'][0]
@@ -126,6 +156,31 @@ class Chatbot:
             return self.handle_tool_call(response, messages, model)
 
         return choice.message.content, response_dict['usage'].total_tokens
+
+    def handle_anthropic_response(self, response) -> Tuple[str, int]:
+        """Process the response from Anthropic."""
+        resp = dict(response)
+
+        # Check stop reason
+        if resp.get("stop_reason") != "end_turn":
+            raise RuntimeError(f"Unexpected stop reason: {resp.get('stop_reason')}")
+
+        contents = resp.get("content", [])
+        text = None
+        for item in contents:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = item.get("text")
+                break
+            elif getattr(item, "type", None) == "text":
+                text = getattr(item, "text", None)
+                break
+        if text is None:
+            raise RuntimeError("No text content found in the response.")
+
+        # Calculate total token
+        usage = dict(resp.get("usage", {}))
+        total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+        return text, total_tokens
 
     def handle_tool_call(self, response, messages: List[dict], model: str) -> Tuple[str, int]:
         """Handle tool call responses from OpenAI."""
@@ -208,10 +263,13 @@ class Chatbot:
         elif isinstance(exception, APIStatusError):
             logger.error(f'APIStatusError: {exception}')
             raise ChatCompletionError('A non-200 status code was received from the API.') from exception
+        elif isinstance(exception, NotFoundError):
+            logger.error(f'NotFoundError: {exception}')
+            raise ChatCompletionError('Did you set an existing model for the current provider?') from exception
 
     def chat(self, system: str, user_assistant: List[str], model: str, temperature: float) -> str:
         """Chat."""
-        content, tokens = self.chat_with_openai(system, user_assistant, model, temperature)
+        content, tokens = self.chat_with_provider(system, user_assistant, model, temperature)
         print(content)
         logger.info(f"({tokens} tokens used.)")
         return content
@@ -258,6 +316,17 @@ class Chatbot:
     def reasoning_effort(self, effort: str) -> None:
         """Set reasoning effort."""
         self.config["reasoning_effort"] = effort
+        self.save_config()
+
+    @property
+    def provider(self) -> str:
+        """Get provider; default to 'openai'."""
+        return self.config.get("provider", "openai")
+
+    @provider.setter
+    def provider(self, provider: str) -> None:
+        """Set provider."""
+        self.config["provider"] = provider
         self.save_config()
 
     @property
@@ -313,6 +382,10 @@ class Chatbot:
     def get_openai_model_list(self) -> str:
         """Get OpenAI models."""
         return self.get_model_list()
+
+    def get_anthropic_model_list(self) -> str:
+        """Get OpenAI models."""
+        return self.client.models.list(limit=5)
 
     def get_tool_list(self) -> str:
         """Get list of available tools."""

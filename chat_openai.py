@@ -8,22 +8,11 @@ import os
 import re
 import sys
 
-from openai import OpenAI
-
 from chat import Chatbot, Speaker, ChatCompletionError, CreateAudioError, SaveAudioError
 from chat.logging_setup import setup_logging
 
 
 logger = setup_logging()
-
-def get_api_key():
-    api_key = os.environ.get('OPENAI_API_KEY')
-    if not api_key:
-        logger.error('OPENAI_API_KEY environment variable not set.')
-        sys.exit(1)
-    return api_key
-
-client = OpenAI(api_key=get_api_key())
 
 def str_to_float(value):
     try:
@@ -40,10 +29,11 @@ def parse_arguments():
     parser.add_argument("--save-audio", type=str, help="Path to save the audio response.")
     parser.add_argument("--model", type=str, help="Specify the model to use.")
     parser.add_argument("--available-models-gpt", action='store_true', help="List available ChatGPT models.")
-    parser.add_argument("--available-models", action='store_true', help="List available OpenAI models.")
+    parser.add_argument("--available-models", action='store_true', help="List available models.")
     parser.add_argument("--available-tools", action='store_true', help="List available tools.")
     parser.add_argument("-t", "--temperature", type=str_to_float, help="Set the temperature for the model.")
     parser.add_argument("-e", "--reasoning-effort", choices=["low", "medium", "high"], help="Set the reasoning effort, only applicable to reasoning models.")
+    parser.add_argument("-p", "--provider", choices=["openai", "anthropic"], help="Choose the provider: OpenAI (default) or Anthropic.")
     parser.add_argument("--use-tools", action='store_true', dest='use_tools', help="Enable tool usage.")
     parser.add_argument("--no-tools", action='store_false', dest='use_tools', help="Disable tool usage.")
     parser.set_defaults(use_tools=None)
@@ -57,7 +47,8 @@ def print_settings(chatbot, header):
         f"\ttemperature: {chatbot.temperature}\n"
         f"\tsystem message: {chatbot.system_message}\n"
         f"\treasoning effort: {chatbot.reasoning_effort}\n"
-        f"\tuse tools: {chatbot.use_tools}"
+        f"\tuse tools: {chatbot.use_tools}\n"
+        f"\tprovider: {chatbot.provider}"
     )
     print(settings)
 
@@ -66,18 +57,25 @@ def log_chat_details(chatbot):
     details = f"Chat\nModel: {chatbot.model}"
     if is_reasoning_model:
         details += f", Reasoning effort: {chatbot.reasoning_effort}"
-    details += f", Temperature: {chatbot.temperature}\n"
+    if chatbot.provider == 'openai':
+        details += f", Temperature: {chatbot.temperature}\n"
+    else:
+        details += "\n"
     details += f"System: {chatbot.system_message}\n"
     details += f"Message: {chatbot.user_messages[-1]}\n"
     logger.info(details)
 
 def main():
     args = parse_arguments()
+
     home_directory = os.path.expanduser("~")
     config_path = os.path.join(home_directory, ".chatconfig.json")
-    chatbot = Chatbot(config_path, client)
+    chatbot = Chatbot(config_path, args.provider)
 
     if args.available_models:
+        if chatbot.provider == 'anthropic':
+            print(chatbot.get_anthropic_model_list())
+            sys.exit(0)
         print(chatbot.get_openai_model_list())
         sys.exit(0)
     if args.available_models_gpt:
@@ -115,7 +113,7 @@ def main():
               "Continue chatting with: ch -c -m \"Your message.\"")
         print_settings(chatbot, "Current settings:")
         sys.exit(0)
-    elif any([args.model, args.system, args.temperature is not None, args.use_tools is not None, args.reasoning_effort]):
+    elif any([args.model, args.system, args.temperature is not None, args.use_tools is not None, args.reasoning_effort, args.provider]):
         print_settings(chatbot, "Settings updated.")
         sys.exit(0)
     else:
