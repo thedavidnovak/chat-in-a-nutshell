@@ -83,18 +83,20 @@ Specify `--use-tools` to enable the model the access to user-defined tools. Spec
 ### -e, --reasoning-effort
 Set the reasoning effort by specifying `--reasoning-effort, -e`. Choose one of the available options: low, medium, high. The option is saved for future requests. The default value for this script is low reasoning effort. This configuration is only applicable to reasoning models.
 
+### -p, --provider
+Set the provider by specifying `--provider, -p`. Choose one of the available options: `openai`, `anthropic`. The option is saved for future requests. The default value for this script is `openai`.
 
 ## Requirements
 
 To use this script, you will need to have the following:
-- Python 3.7.1 or higher
+- Python 3.8 or higher
 - An OpenAI API key (stored in an environment variable `OPENAI_API_KEY`)
 
 
 ## Usage
 
 To use the script:
-1. Add your API key to the `OPENAI_API_KEY` environment variable.
+1. Add your API key to the `OPENAI_API_KEY` environment variable (`ANTHROPIC_API_KEY` for Anthropic).
 2. Install the package using: `pip install chat-in-a-nutshell`
 
 
@@ -104,6 +106,14 @@ This script was developed for chatting with OpenAI's ChatGPT from the comfort of
 Please note that there is no warranty for script functionality. Also, keep in mind that it is suitable for brief and straightforward messages.
 
 ## Release Notes
+
+### Version 1.5.0 (2025-03-02)
+- **Anthropic Provider Integration**:
+  - Added support for Anthropic as a provider.
+  - Select provider with `-p` or `--provider` flag.
+  - Requires `ANTHROPIC_API_KEY` environment variable for authentication.
+  - Required parameter `max_tokens` is set to 8,000 tokens (the absolute maximum number of tokens to generate)
+- **Dependencies**: Added `anthropic~=0.49.0`.
 
 ### Version 1.4.0 (2025-02-24)
 - **OpenAI requests refactoring**:

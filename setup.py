@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='chat_in_a_nutshell',
-    version='1.4.0',
+    version='1.5.0',
     author='David Novák',
     description="A terminal-based script for interacting with OpenAI's API.",
     long_description=open('README.md').read(),
@@ -18,7 +18,8 @@ setup(
     },
     python_requires='>=3.8',
     install_requires=[
-        'openai~=1.62.0'
+        'openai~=1.62.0',
+        'anthropic~=0.49.0'
     ],
     classifiers=[
         'Programming Language :: Python :: 3',
