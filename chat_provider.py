@@ -33,6 +33,7 @@ def parse_arguments():
     parser.add_argument("--available-tools", action='store_true', help="List available tools.")
     parser.add_argument("-t", "--temperature", type=str_to_float, help="Set the temperature for the model.")
     parser.add_argument("-e", "--reasoning-effort", choices=["low", "medium", "high"], help="Set the reasoning effort, only applicable to reasoning models.")
+    parser.add_argument("--max-tokens", type=int, help="Absolute maximum number of tokens to generate.")
     parser.add_argument("-p", "--provider", choices=["openai", "anthropic"], help="Choose the provider: OpenAI (default) or Anthropic.")
     parser.add_argument("--use-tools", action='store_true', dest='use_tools', help="Enable tool usage.")
     parser.add_argument("--no-tools", action='store_false', dest='use_tools', help="Disable tool usage.")
@@ -43,12 +44,13 @@ def parse_arguments():
 def print_settings(chatbot, header):
     settings = (
         f"{header}\n"
+        f"\tprovider: {chatbot.provider}\n"
         f"\tmodel: {chatbot.model:<10}\n"
         f"\ttemperature: {chatbot.temperature}\n"
         f"\tsystem message: {chatbot.system_message}\n"
         f"\treasoning effort: {chatbot.reasoning_effort}\n"
-        f"\tuse tools: {chatbot.use_tools}\n"
-        f"\tprovider: {chatbot.provider}"
+        f"\tmax tokens: {chatbot.max_tokens}\n"
+        f"\tuse tools: {chatbot.use_tools}"
     )
     print(settings)
 
@@ -85,6 +87,7 @@ def main():
     chatbot.system_message = args.system or chatbot.system_message
     chatbot.model = args.model or chatbot.model
     chatbot.reasoning_effort = args.reasoning_effort or chatbot.reasoning_effort
+    chatbot.max_tokens = args.max_tokens or chatbot.max_tokens
     chatbot.temperature = args.temperature if args.temperature is not None else chatbot.temperature
     chatbot.use_tools = args.use_tools if args.use_tools is not None else chatbot.use_tools
 
@@ -113,7 +116,7 @@ def main():
               "Continue chatting with: ch -c -m \"Your message.\"")
         print_settings(chatbot, "Current settings:")
         sys.exit(0)
-    elif any([args.model, args.system, args.temperature is not None, args.use_tools is not None, args.reasoning_effort, args.provider]):
+    elif any([args.model, args.system, args.temperature is not None, args.use_tools is not None, args.reasoning_effort, args.provider, args.max_tokens]):
         print_settings(chatbot, "Settings updated.")
         sys.exit(0)
     else:
@@ -123,16 +126,16 @@ def main():
     log_chat_details(chatbot)
 
     try:
-        content = chatbot.chat(chatbot.system_message, chatbot.user_messages, chatbot.model, chatbot.temperature)
+        content = chatbot.chat(chatbot.system_message, chatbot.user_messages, chatbot.model, chatbot.temperature, chatbot.max_tokens)
     except ChatCompletionError as e:
-        logger.error(f'Could not finish chat completion: {e}')
+        logger.error(f'Could not finish chat completion:\n{e}')
         if args.conversation:
             chatbot.append_user_message('There was an error requesting the API. Please try again.')
         else:
             chatbot.user_messages = []
         sys.exit(1)
     except Exception as e:
-        logger.error(f'An unexpected error occurred: {e}. Please check specified arguments and settings.')
+        logger.error(f'An unexpected error occurred:\n{e}\nPlease check specified arguments and settings.')
         if args.conversation:
             chatbot.append_user_message('There was an error requesting the API. Please try again.')
         else:
