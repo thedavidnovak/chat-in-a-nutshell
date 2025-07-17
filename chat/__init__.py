@@ -1,8 +1,32 @@
-from .chat import Chatbot, ChatCompletionError
-from .audio import Speaker, CreateAudioError, SaveAudioError
+from chat.chat import Chatbot
+from chat.exceptions import (
+    ChatError,
+    ChatConfigError,
+    ChatCompletionError,
+    ProviderError,
+    ConnectionError,
+    AuthenticationError,
+    RateLimitError,
+    ResourceNotFoundError,
+    ResponseFormatError,
+    ToolError,
+    ToolLoadError,
+    ToolExecutionError,
+)
 
 
 __all__ = [
-    'Chatbot', 'ChatCompletionError',
-    'Speaker', 'CreateAudioError', 'SaveAudioError'
+    'Chatbot',
+    'ChatError',
+    'ChatConfigError',
+    'ChatCompletionError',
+    'ProviderError',
+    'ConnectionError',
+    'AuthenticationError',
+    'RateLimitError',
+    'ResourceNotFoundError',
+    'ResponseFormatError',
+    'ToolError',
+    'ToolLoadError',
+    'ToolExecutionError',
 ]
