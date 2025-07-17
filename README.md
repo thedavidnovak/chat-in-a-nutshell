@@ -106,6 +106,15 @@ To use the script:
 1. Add your API key to the `OPENAI_API_KEY` environment variable (`ANTHROPIC_API_KEY` for Anthropic).
 2. Install the package using: `pip install chat-in-a-nutshell`
 
+### Debug Mode
+
+To see detailed error logs and tracebacks, set the `CHAT_LOG_LEVEL` environment variable to `DEBUG`:
+
+```bash
+export CHAT_LOG_LEVEL=DEBUG
+ch -m "Your message"
+```
+
 
 ## Limitations
 
@@ -113,6 +122,9 @@ This script was developed for chatting with OpenAI's ChatGPT from the comfort of
 Please note that there is no warranty for script functionality. Also, keep in mind that it is suitable for brief and straightforward messages.
 
 ## Release Notes
+
+### Version 1.6.0 (2025-07-17)
+- Documentation for this release will be updated in the next version.
 
 ### Version 1.5.1 (2025-03-02)
 - Added `--max-tokens` parameter to limit token generation (default: 4096)

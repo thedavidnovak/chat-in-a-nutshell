@@ -6,7 +6,35 @@ on:
       - 'v*'
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+
+    - name: Run tests
+      run: |
+        pytest tests/
+
+    - name: Run linting checks
+      continue-on-error: true
+      run: |
+        echo "Running linting checks (warnings only)..."
+        flake8 chat/ tests/ chat_provider.py || echo "::warning::Linting issues found, but continuing pipeline"
+
   build-and-deploy:
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
